@@ -1,0 +1,379 @@
+﻿using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.Win32;
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+
+namespace AppGroup {
+    public sealed partial class SettingsDialog : ContentDialog {
+        private SettingsHelper.AppSettings _settings;
+        private readonly DispatcherQueue _dispatcherQueue;
+        private bool _isLoading = true;
+        private bool _isCheckingForUpdates = false;
+        private string _updateReleaseUrl = "";
+
+        public SettingsDialog() {
+            this.InitializeComponent();
+
+            // Get the dispatcher queue for UI thread operations
+            _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
+
+            // Display the current version
+            VersionText.Text = $"版本 {UpdateChecker.GetCurrentVersion()}";
+
+            this.Loaded += SettingsDialog_Loaded;
+        }
+
+        private async void SettingsDialog_Loaded(object sender, RoutedEventArgs e) {
+            try {
+                await LoadCurrentSettingsAsync();
+                ThemeComboBox.SelectionChanged += ThemeComboBox_SelectionChanged;
+                PopupThemeComboBox.SelectionChanged += PopupThemeComboBox_SelectionChanged;
+                AccentBackgroundToggle.Toggled += AccentBackgroundToggle_Toggled;
+                // Wire up toggle events after loading to prevent firing during init
+
+                SystemTrayToggle.Toggled += SystemTrayToggle_Toggled;
+                StartupToggle.Toggled += StartupToggle_Toggled;
+                GrayscaleIconToggle.Toggled += GrayScaleToggle_Toggled;
+                UpdateCheckToggle.Toggled += UpdateCheckToggle_Toggled;
+                WindowSlideAnimationToggle.Toggled += WindowSlideAnimationToggle_Toggled;
+                ContentSlideAnimationToggle.Toggled += ContentSlideAnimationToggle_Toggled;
+                LaunchAllToggle.Toggled += LaunchAllToggle_Toggled;
+                _isLoading = false;
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error in SettingsDialog_Loaded: {ex.Message}");
+                _isLoading = false;
+            }
+        }
+
+        private async void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                await SaveSettingsAsync();
+                var requestedTheme = _settings.AppTheme switch {
+                    "Light" => ElementTheme.Light,
+                    "Dark" => ElementTheme.Dark,
+                    _ => ElementTheme.Default
+                };
+                ApplyThemeToDialog(requestedTheme);
+                if (App.Current is App app)
+                    app.ApplyTheme(requestedTheme);
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving theme: {ex.Message}");
+            }
+        }
+        private void ApplyThemeToDialog(ElementTheme theme) {
+            // ContentDialog inherits FrameworkElement, so this works directly
+            ((FrameworkElement)this).RequestedTheme = theme;
+        }
+       
+        private async Task LoadCurrentSettingsAsync() {
+            try {
+                _settings = await SettingsHelper.LoadSettingsAsync();
+                ThemeComboBox.SelectedIndex = _settings.AppTheme switch {
+                    "Light" => 0,
+                    "Dark" => 1,
+                    _ => 2  // "System"
+                };
+
+                PopupThemeComboBox.SelectedIndex = _settings.PopupTheme switch {
+                    "Light" => 0,
+                    "Dark" => 1,
+                    "AppMode" => 2,
+                    _ => 3  // "WindowsMode"
+                };
+                AccentBackgroundToggle.IsOn = _settings.PopupAccentBackground;
+                UpdateAccentBackgroundState(_settings.PopupTheme);
+                var theme = _settings.AppTheme switch {
+                    "Light" => ElementTheme.Light,
+                    "Dark" => ElementTheme.Dark,
+                    _ => ElementTheme.Default
+                };
+
+                ApplyThemeToDialog(theme);
+                // Update UI with current settings
+                SystemTrayToggle.IsOn = _settings.ShowSystemTrayIcon;
+                StartupToggle.IsOn = _settings.RunAtStartup;
+                GrayscaleIconToggle.IsOn = _settings.UseGrayscaleIcon;
+                UpdateCheckToggle.IsOn = _settings.CheckForUpdatesOnStartup;
+                WindowSlideAnimationToggle.IsOn = _settings.EnableWindowSlideAnimation;
+                LaunchAllToggle.IsOn = _settings.EnableLaunchAll;
+                ContentSlideAnimationToggle.IsOn = _settings.EnableContentSlideAnimation;
+                // Verify startup setting matches registry
+                bool isInRegistry = SettingsHelper.IsInStartupRegistry();
+                if (_settings.RunAtStartup != isInRegistry) {
+                    // Sync the setting with actual registry state
+                    _settings.RunAtStartup = isInRegistry;
+                    StartupToggle.IsOn = isInRegistry;
+                    await SettingsHelper.SaveSettingsAsync(_settings);
+                }
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error loading settings in dialog: {ex.Message}");
+                // Fallback to defaults
+                _settings = new SettingsHelper.AppSettings();
+                SystemTrayToggle.IsOn = true;
+                StartupToggle.IsOn = true;
+                GrayscaleIconToggle.IsOn = false;
+                UpdateCheckToggle.IsOn = true;
+            }
+        }
+        private async void LaunchAllToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving launch-all setting: {ex.Message}");
+                _isLoading = true;
+                LaunchAllToggle.IsOn = !LaunchAllToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+        private async void SystemTrayToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving system tray settings: {ex.Message}");
+                // Revert the toggle if saving failed
+                _isLoading = true;
+                SystemTrayToggle.IsOn = !SystemTrayToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+
+        private async void StartupToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving startup settings: {ex.Message}");
+                // Revert the toggle if saving failed
+                _isLoading = true;
+                StartupToggle.IsOn = !StartupToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+
+        private async void GrayScaleToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving grayscale settings: {ex.Message}");
+                // Revert the toggle if saving failed
+                _isLoading = true;
+                GrayscaleIconToggle.IsOn = !GrayscaleIconToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+
+        private async void UpdateCheckToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving update check settings: {ex.Message}");
+                // Revert the toggle if saving failed
+                _isLoading = true;
+                UpdateCheckToggle.IsOn = !UpdateCheckToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+
+        private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e) {
+            if (_isCheckingForUpdates) return;
+
+            _isCheckingForUpdates = true;
+            CheckUpdateButton.IsEnabled = false;
+            UpdateStatusText.Text = "正在检查更新...";
+
+            try {
+                var updateInfo = await UpdateChecker.CheckForUpdatesAsync();
+
+                if (!string.IsNullOrEmpty(updateInfo.ErrorMessage)) {
+                    UpdateStatusText.Text = updateInfo.ErrorMessage;
+                }
+                else if (updateInfo.UpdateAvailable) {
+                    UpdateStatusText.Text = $"v{updateInfo.LatestVersion} 可用";
+                    _updateReleaseUrl = updateInfo.ReleaseUrl;
+
+                    // Show inline InfoBar
+                    UpdateInfoBar.Message = $"新版本 v{updateInfo.LatestVersion} 可用（当前 v{updateInfo.CurrentVersion}）";
+                    UpdateInfoBar.IsOpen = true;
+                }
+                else {
+                    UpdateStatusText.Text = $"已是最新版本！(v{updateInfo.CurrentVersion})";
+                }
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error checking for updates: {ex}");
+                UpdateStatusText.Text = "检查更新失败";
+            }
+            finally {
+                _isCheckingForUpdates = false;
+                CheckUpdateButton.IsEnabled = true;
+            }
+        }
+
+        private void DownloadUpdate_Click(object sender, RoutedEventArgs e) {
+            if (!string.IsNullOrEmpty(_updateReleaseUrl)) {
+                UpdateChecker.OpenReleasesPage(_updateReleaseUrl);
+            }
+        }
+        private async void PopupThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                var selected = (PopupThemeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+                UpdateAccentBackgroundState(selected);
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving popup theme: {ex.Message}");
+            }
+        }
+        private void UpdateAccentBackgroundState(string popupTheme) {
+            bool isWindowsMode = popupTheme == "WindowsMode";
+            AccentBackgroundToggle.IsEnabled = isWindowsMode;
+            AccentBackgroundInfoBar.IsOpen = !isWindowsMode;
+        }
+        private async void AccentBackgroundToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving accent background setting: {ex.Message}");
+                _isLoading = true;
+                AccentBackgroundToggle.IsOn = !AccentBackgroundToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+        private async Task SaveSettingsAsync() {
+            try {
+                if (_settings == null) {
+                    _settings = new SettingsHelper.AppSettings();
+                }
+
+                // Update settings from UI
+                _settings.ShowSystemTrayIcon = SystemTrayToggle.IsOn;
+                _settings.RunAtStartup = StartupToggle.IsOn;
+                _settings.UseGrayscaleIcon = GrayscaleIconToggle.IsOn;
+                _settings.CheckForUpdatesOnStartup = UpdateCheckToggle.IsOn;
+                _settings.EnableWindowSlideAnimation = WindowSlideAnimationToggle.IsOn;
+                _settings.EnableContentSlideAnimation = ContentSlideAnimationToggle.IsOn;
+                _settings.EnableLaunchAll = LaunchAllToggle.IsOn;
+                _settings.AppTheme = (ThemeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "System";
+                _settings.PopupTheme = (PopupThemeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "WindowsMode";
+                // Save to file
+                await SettingsHelper.SaveSettingsAsync(_settings);
+
+                // Apply settings immediately (but safely)
+                await Task.Run(() => {
+                    try {
+                        ApplySystemTraySettings();
+                        ApplyStartupSettings();
+                    }
+                    catch (Exception ex) {
+                        Debug.WriteLine($"Error applying settings: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving settings: {ex.Message}");
+                throw; // Re-throw to let the caller handle it
+            }
+        }
+        private async void WindowSlideAnimationToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving window slide animation settings: {ex.Message}");
+                _isLoading = true;
+                WindowSlideAnimationToggle.IsOn = !WindowSlideAnimationToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+
+        private async void ContentSlideAnimationToggle_Toggled(object sender, RoutedEventArgs e) {
+            if (_isLoading) return;
+            try {
+                await SaveSettingsAsync();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error saving window slide animation settings: {ex.Message}");
+                _isLoading = true;
+                ContentSlideAnimationToggle.IsOn = !ContentSlideAnimationToggle.IsOn;
+                _isLoading = false;
+            }
+        }
+        private void CloseDialog(object sender, RoutedEventArgs e) {
+            try {
+                this.Hide();
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error closing dialog: {ex.Message}");
+                // Try alternative approach if Hide() fails
+                try {
+                    if (this.XamlRoot?.Content is FrameworkElement rootElement) {
+                        // Remove from visual tree if possible
+                    }
+                }
+                catch (Exception ex2) {
+                    Debug.WriteLine($"Error in alternative close method: {ex2.Message}");
+                }
+            }
+        }
+
+        private void ApplySystemTraySettings() {
+            try {
+                if (_settings.ShowSystemTrayIcon) {
+                    // Initialize/show system tray if it's not already shown
+                    if (App.Current is App app) {
+                        app.ShowSystemTray();
+                    }
+                }
+                else {
+                    // Hide system tray
+                    if (App.Current is App app) {
+                        app.HideSystemTray();
+                    }
+                }
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error applying system tray settings: {ex.Message}");
+            }
+        }
+
+        private void ApplyStartupSettings() {
+            try {
+                if (_settings.RunAtStartup) {
+                    SettingsHelper.AddToStartup();
+                }
+                else {
+                    SettingsHelper.RemoveFromStartup();
+                }
+            }
+            catch (Exception ex) {
+                Debug.WriteLine($"Error applying startup settings: {ex.Message}");
+            }
+        }
+    }
+}

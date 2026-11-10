@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>UiaProbe</AssemblyName>
+    <NoWarn>MSB3277</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="WindowsBase">
+      <HintPath>D:/SoftWare/dotnet8/shared/Microsoft.WindowsDesktop.App/8.0.33/WindowsBase.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="UIAutomationClient">
+      <HintPath>D:/SoftWare/dotnet8/shared/Microsoft.WindowsDesktop.App/8.0.33/UIAutomationClient.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="UIAutomationTypes">
+      <HintPath>D:/SoftWare/dotnet8/shared/Microsoft.WindowsDesktop.App/8.0.33/UIAutomationTypes.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
